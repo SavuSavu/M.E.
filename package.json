@@ -1,0 +1,44 @@
+{
+  "name": "me-model-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build && node scripts/copy-notices.mjs",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "build:pages": "ME_BASE_PATH=/M.E./ npm run build",
+    "test:pages": "playwright test --config playwright.pages.config.ts",
+    "format": "prettier --write src tests scripts *.ts *.json docs/*.md README.md",
+    "benchmark": "ME_BENCH=1 vitest run tests/performance.test.ts"
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "fflate": "^0.8.3",
+    "idb-keyval": "6.2.2",
+    "lucide-react": "0.468.0",
+    "manifold-3d": "3.5.4",
+    "opencascade.js": "2.0.0-beta.b5ff984",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "three": "0.170.0",
+    "three-mesh-bvh": "0.9.8",
+    "zustand": "5.0.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.1",
+    "@types/node": "^22.20.4",
+    "@types/react": "19.1.16",
+    "@types/react-dom": "19.1.9",
+    "@types/three": "0.170.0",
+    "@vitejs/plugin-react": "5.0.4",
+    "prettier": "^3.6.2",
+    "typescript": "5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^5.0.3"
+  }
+}

@@ -1,0 +1,63 @@
+# Reduced browser kernel recipe. Validate against tests/e2e before shipping.
+mainBuild:
+  name: me-kernel.js
+  bindings:
+    - symbol: Message_ProgressRange
+    - symbol: TopoDS
+    - symbol: TopoDS_Shape
+    - symbol: TopoDS_Face
+    - symbol: TopoDS_Edge
+    - symbol: TopoDS_Wire
+    - symbol: TopoDS_Vertex
+    - symbol: TopAbs_ShapeEnum
+    - symbol: TopAbs_Orientation
+    - symbol: TopExp_Explorer
+    - symbol: TopLoc_Location
+    - symbol: gp_Pnt
+    - symbol: gp_Vec
+    - symbol: gp_Dir
+    - symbol: gp_XYZ
+    - symbol: gp_Trsf
+    - symbol: gp_GTrsf
+    - symbol: gp_Mat
+    - symbol: gp_Circ
+    - symbol: gp_Pln
+    - symbol: gp_Ax1
+    - symbol: gp_Ax2
+    - symbol: gp_Ax3
+    - symbol: gp_Quaternion
+    - symbol: gp_TrsfForm
+    - symbol: BRepPrimAPI_MakeBox
+    - symbol: BRepPrimAPI_MakeCylinder
+    - symbol: BRepPrimAPI_MakeSphere
+    - symbol: BRepPrimAPI_MakePrism
+    - symbol: BRepAlgoAPI_Fuse
+    - symbol: BRepAlgoAPI_Cut
+    - symbol: BRepAlgoAPI_Common
+    - symbol: BRepFilletAPI_MakeFillet
+    - symbol: BRepFilletAPI_MakeChamfer
+    - symbol: ChFi3d_FilletShape
+    - symbol: BRepBuilderAPI_Transform
+    - symbol: BRepBuilderAPI_GTransform
+    - symbol: BRepCheck_Analyzer
+    - symbol: BRepMesh_IncrementalMesh
+    - symbol: BRep_Tool
+    - symbol: BRepTools
+    - symbol: BRep_Builder
+    - symbol: BRepAdaptor_Curve
+    - symbol: BRepAdaptor_Surface
+    - symbol: GeomAbs_CurveType
+    - symbol: GeomAbs_SurfaceType
+    - symbol: Poly_Triangulation
+    - symbol: Handle_Poly_Triangulation
+    - symbol: Poly_Triangle
+    - symbol: Poly_MeshPurpose
+    - symbol: TopTools_FormatVersion
+  emccFlags:
+    - -O3
+    - -sEXPORT_ES6=1
+    - -sUSE_ES6_IMPORT_META=0
+    - -sEXPORTED_RUNTIME_METHODS=['FS']
+    - -sINITIAL_MEMORY=100MB
+    - -sMAXIMUM_MEMORY=2GB
+    - -sALLOW_MEMORY_GROWTH=1
