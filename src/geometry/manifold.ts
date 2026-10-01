@@ -8,6 +8,8 @@ import {
   transformMatrix,
 } from "./mesh";
 import type { GeometryRevision, JobRequest, Vec3 } from "../types";
+import { meshEdgeChains } from "./edgeChains";
+import { blendCutters } from "./meshBlend";
 let modulePromise: Promise<any> | undefined;
 export const manifoldModule = () =>
   (modulePromise ??= (
@@ -71,128 +73,46 @@ export async function meshOperation(job: JobRequest) {
       return parts.map(revisionFromManifold);
     }
     if (["fillet", "chamfer"].includes(job.operation)) {
-      const g = buildRevision(
-          transformedPositions(inputs[0].geometry, inputs[0].transform),
-        ),
-        ids: number[] = job.params.edges || [];
-      if (ids.length !== 1)
-        throw new Error(
-          "Select one isolated straight convex edge for mesh fillet/chamfer.",
-        );
-      // Reflections reverse triangle winding, so match the selected edge in world space.
-      const sourceEdge = inputs[0].geometry.edges[ids[0]];
-      if (!sourceEdge) throw new Error("Selected edge is no longer available.");
+      const source = inputs[0].geometry;
       const matrix = transformMatrix(inputs[0].transform);
-      const endpointA = new THREE.Vector3(...sourceEdge.a).applyMatrix4(matrix);
-      const endpointB = new THREE.Vector3(...sourceEdge.b).applyMatrix4(matrix);
-      const tolerance = Math.max(
-        1e-8,
-        endpointA.distanceTo(endpointB) ** 2 * 1e-12,
+      const g = matrix.equals(new THREE.Matrix4())
+        ? source
+        : buildRevision(transformedPositions(source, inputs[0].transform));
+      const sourceIds = meshEdgeChains(source, job.params.edges || []).flatMap(
+        (chain) => chain.ids,
       );
-      const same = (point: Vec3, target: THREE.Vector3) =>
-        new THREE.Vector3(...point).distanceToSquared(target) <= tolerance;
-      const e = g.edges.find(
-          (edge) =>
-            (same(edge.a, endpointA) && same(edge.b, endpointB)) ||
-            (same(edge.a, endpointB) && same(edge.b, endpointA)),
-        ),
-        r = Number(job.params.amount);
-      if (!e || e.faces.length !== 2 || r <= 0)
-        throw new Error("Select a manifold convex edge and a positive size.");
-      const n1 = new THREE.Vector3().fromArray(g.faceNormals, e.faces[0] * 3),
-        n2 = new THREE.Vector3().fromArray(g.faceNormals, e.faces[1] * 3);
-      if (Math.abs(n1.dot(n2)) > 0.01)
-        throw new Error(
-          "Initial mesh blends support perpendicular planar surfaces.",
-        );
-      const pa = new THREE.Vector3(...e.a),
-        pb = new THREE.Vector3(...e.b),
-        axis = pb.clone().sub(pa),
-        length = axis.length();
-      axis.normalize();
-      if (length < r * 4)
-        throw new Error("Blend size exceeds the available edge clearance.");
-      for (const f of e.faces)
-        for (const item of g.adjacency[f])
-          if (
-            item.angle < 1 &&
-            Math.abs(
-              new THREE.Vector3()
-                .fromArray(g.faceNormals, f * 3)
-                .dot(
-                  new THREE.Vector3().fromArray(
-                    g.faceNormals,
-                    item.neighbor * 3,
-                  ),
-                ) - 1,
-            ) > 1e-4
-          )
-            throw new Error("Blend requires planar adjacent patches.");
-      const inside = pa
-        .clone()
-        .addScaledVector(axis, length / 2)
-        .addScaledVector(n1, -r / 10)
-        .addScaledVector(n2, -r / 10);
-      // Point containment prevents cutting a concave crease as if it were convex.
-      const ray = new THREE.Ray(
-          inside,
-          new THREE.Vector3(0.312, 0.537, 0.784).normalize(),
-        ),
-        v1 = new THREE.Vector3(),
-        v2 = new THREE.Vector3(),
-        v3 = new THREE.Vector3(),
-        hit = new THREE.Vector3();
-      let crossings = 0;
-      for (let i = 0; i < g.positions.length; i += 9)
-        if (
-          ray.intersectTriangle(
-            v1.fromArray(g.positions, i),
-            v2.fromArray(g.positions, i + 3),
-            v3.fromArray(g.positions, i + 6),
-            false,
-            hit,
-          )
-        )
-          crossings++;
-      if (crossings % 2 !== 1)
-        throw new Error("Only convex outside edges are supported.");
-      const polygon: number[][] = [
-        [0, 0],
-        [r, 0],
-      ];
-      if (job.operation === "fillet")
-        for (let i = 1; i <= 24; i++) {
-          const t = -Math.PI / 2 - (i * Math.PI) / 48;
-          polygon.push([r + r * Math.cos(t), r + r * Math.sin(t)]);
-        }
-      else polygon.push([0, r]);
-      let cutter = own(m.Manifold.extrude([polygon], length));
-      const basis = new THREE.Matrix4().makeBasis(
-        n1.clone().negate(),
-        n2.clone().negate(),
-        axis,
+      const worldIds =
+        g === source
+          ? sourceIds
+          : sourceIds.map((sourceId) => {
+              const edge = source.edges[sourceId];
+              const a = new THREE.Vector3(...edge.a).applyMatrix4(matrix);
+              const b = new THREE.Vector3(...edge.b).applyMatrix4(matrix);
+              const tolerance = Math.max(1e-8, a.distanceToSquared(b) * 1e-12);
+              const same = (point: Vec3, target: THREE.Vector3) =>
+                new THREE.Vector3(...point).distanceToSquared(target) <=
+                tolerance;
+              const id = g.edges.findIndex(
+                (e) =>
+                  (same(e.a, a) && same(e.b, b)) ||
+                  (same(e.a, b) && same(e.b, a)),
+              );
+              if (id < 0)
+                throw new Error(
+                  "Selected edge is no longer available. Select it again.",
+                );
+              return id;
+            });
+      const cutters = blendCutters(
+        g,
+        meshEdgeChains(g, worldIds),
+        m,
+        Number(job.params.amount),
+        job.operation as "fillet" | "chamfer",
+        own,
       );
-      const values = basis.elements;
-      const mat = [
-        values[0],
-        values[1],
-        values[2],
-        0,
-        values[4],
-        values[5],
-        values[6],
-        0,
-        values[8],
-        values[9],
-        values[10],
-        0,
-        pa.x,
-        pa.y,
-        pa.z,
-        1,
-      ];
-      cutter = own(cutter.transform(mat));
-      result = own(a.subtract(cutter));
+      result = a;
+      for (const cutter of cutters) result = own(result.subtract(cutter));
     } else if (job.operation === "offset") {
       const ids: number[] = job.params.faces || [],
         g = inputs[0].geometry,

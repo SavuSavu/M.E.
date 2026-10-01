@@ -4,8 +4,8 @@
   background: #101820;
   font-size: 12px;
   font-synthesis: none;
-  --line: #2b3642;
-  --muted: #7e91a3;
+  --line: #405263;
+  --muted: #b3c4d1;
   --accent: #71dfc2;
   --panel: #18222d;
 }
@@ -1143,4 +1143,70 @@ kbd {
   .navigation-hint {
     gap: 10px;
   }
+}
+
+/* Keep instructions readable and distinguish selection from the pale model. */
+.feature-button,
+.header-button,
+.workspace-tabs button,
+.selection-toolbar button {
+  color: #c6d5e0;
+}
+.panel-description,
+.field > span,
+.eyebrow,
+.selection-settings,
+.navigation-hint,
+.body-tag,
+.panel-badge,
+.status-bar,
+.tree-heading,
+.document-state {
+  color: #b5c7d5;
+}
+.selection-toolbar .selection-mode button.active,
+.selection-toolbar .mask-active {
+  background: #36594e;
+  color: #edfff8;
+  box-shadow: inset 0 0 0 1px #7fdec4;
+}
+.body-row.selected {
+  background: #2d4c47;
+  color: #f0fff9;
+  box-shadow: inset 3px 0 #83f2cf;
+}
+.selection-summary {
+  color: #ffdf7d;
+}
+.edge-selection-prompt {
+  padding: 13px;
+  margin-bottom: 18px;
+  border: 1px solid #c49c37;
+  border-radius: 7px;
+  background: #29303a;
+  color: #e2edf5;
+}
+.edge-selection-prompt strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #ffdf7d;
+  font-size: 13px;
+}
+.edge-selection-prompt > span {
+  display: block;
+  color: #cbdbe7;
+  font-size: 11px;
+}
+.edge-selection-prompt p {
+  line-height: 1.65;
+  margin: 10px 0;
+}
+.selection-key i {
+  display: inline-block;
+  width: 22px;
+  height: 4px;
+  margin-right: 6px;
+  border-radius: 2px;
+  background: #ffda60;
+  vertical-align: middle;
 }

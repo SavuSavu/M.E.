@@ -57,8 +57,9 @@ Run the same browser smoke test against a deployed site with
 - Move, rotate, uniform/per-axis scale, Mirror X, align and place-on-face.
 - Union/subtract/intersect, plane/object split and reusable negative objects.
 - Exact native cube/cylinder/sphere solids, native fillet/chamfer and planar offset.
-- Approximate STL fillet/chamfer on a single straight convex edge between
-  perpendicular planar patches; mesh planar-region offset.
+- Approximate STL fillet/chamfer along complete straight convex edge chains
+  between perpendicular planar patches, including several selected edges;
+  mesh planar-region offset.
 - Section view, wireframe, distance/angle/radius measurement, mesh diagnostics,
   explicit T-junction repair, simplification and subdivision.
 - Preview / Apply / Cancel, undo/redo, editable numerical history and suppression.
@@ -89,6 +90,15 @@ CAD circular edges report their analytic radius. STEP import/export is deferred.
 | Escape                          | Close tool / cancel running geometry |
 
 Use the View tab for orthographic/perspective, named views, wireframe and section.
+
+Opening Fillet or Chamfer switches to edge picking. Click a visible feature edge;
+straight STL edges are followed across their triangle segments. Click additional
+adjoining edges to continue around a corner, and Shift-click to remove them.
+Yellow marks selected edges; cyan shows the edge under the cursor. The panel
+reports the selected edge count and prompts for selection before enabling Apply.
+Preview is cleared when the selection changes. Curved or concave STL blends
+remain unsupported, and intersecting mesh fillets use approximate swept cuts
+rather than exact CAD corner patches.
 Dimensions default to millimetres, with Z up. A project preserves geometry,
 transforms, selection, history and cutter roles; STL exports the final triangles.
 

@@ -1,6 +1,7 @@
 import { useEditor } from "./editor";
 import { runJob, cancelJob } from "../geometry/jobs";
 import { effectiveSelection } from "../geometry/selection";
+import { meshEdgeChains } from "../geometry/edgeChains";
 import { uid, identityTransform, emptySelection } from "../types";
 import type {
   Body,
@@ -181,6 +182,17 @@ export async function prepareOperation(
   }
   const captured = { ...params };
   const ref = s.selection.refs.find((r) => r.bodyId === inputs[0]?.id);
+  const selectedEdges = [
+    ...new Set(
+      s.selection.refs
+        .filter(
+          (r) =>
+            r.bodyId === inputs[0]?.id &&
+            ["edge", "loop", "curve", "connected-edges"].includes(r.kind),
+        )
+        .flatMap((r) => r.ids),
+    ),
+  ];
   if (
     operation === "offset" &&
     (ref?.kind === "brush" || s.selection.paint?.bodyId === inputs[0]?.id)
@@ -197,7 +209,7 @@ export async function prepareOperation(
       params.edges ||
       effectiveSelection(
         s.geometries[inputs[0].geometryId],
-        ref?.ids || [],
+        selectedEdges,
         s.selection.mode,
         true,
         s.selection.angle,
@@ -213,10 +225,35 @@ export async function prepareOperation(
   if (
     ["fillet", "chamfer"].includes(operation) &&
     ref &&
+    !selectedEdges.length &&
     !["edge", "loop", "curve", "connected-edges"].includes(ref.kind)
   ) {
     report(new Error("Use By Line or By Curve to select edges for this tool."));
     return;
+  }
+  if (["fillet", "chamfer"].includes(operation)) {
+    if (!captured.edges.length) {
+      s.patch({
+        entity: "edge",
+        brush: false,
+        tool: "select",
+        error: null,
+        notice:
+          "Select an edge in the viewport. Click additional edges to add them; Shift-click to remove.",
+      });
+      return;
+    }
+    const g = s.geometries[inputs[0].geometryId];
+    if (g.kind === "mesh") {
+      try {
+        captured.edges = meshEdgeChains(g, captured.edges).flatMap(
+          (chain) => chain.ids,
+        );
+      } catch (error) {
+        report(error);
+        return;
+      }
+    }
   }
   s.patch({
     error: null,

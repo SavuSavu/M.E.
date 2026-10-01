@@ -83,9 +83,20 @@ millimetres.
 ## Present limits
 
 - STL-only file import/export. STEP is deliberately deferred.
-- Initial STL fillet/chamfer accepts one straight convex edge segment between
-  perpendicular planar surfaces. It builds a tessellated cutter; it is approximate.
-  Curved, concave and multi-edge corner blends are not supported.
+- STL fillet/chamfer follows collinear welded feature segments between the same
+  two perpendicular planar surfaces, stopping at corners. Several selected chains
+  are processed atomically as swept cuts. Curved and concave STL blends are not
+  supported; intersecting fillets do not construct exact rolling-ball corner patches.
+  Native B-Rep blends continue to use the kernel's topological edges.
+
+Edge picking measures distance in screen pixels and checks visibility against the
+display mesh. Slightly offset rays avoid rejecting an edge when a silhouette ray
+misses its front triangle. Picking works just outside the outline, under perspective
+and after body transforms. Feature-edge lookup and welded connectivity are cached
+per immutable revision. Selected edges use 4 px yellow lines with an 8 px dark
+outline; hover uses cyan. The edge tool preserves prior edge/curve selections and
+prompts to add adjoining edges where automatic straight continuation stops.
+
 - Mesh face offset accepts one planar region with one simple closed boundary.
   Native face offset uses an exact prism and Boolean for a single planar face.
 - Repair resolves small T-junctions. It does not fill arbitrary holes or recreate

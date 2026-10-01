@@ -63,7 +63,7 @@ import {
 } from "./state/project";
 import { rebuildHistory } from "./state/history";
 import { emptySelection } from "./types";
-import type { EntityKind } from "./types";
+import type { EntityKind, TopologyRef } from "./types";
 function ToolButton({
   icon: Icon,
   label,
@@ -146,14 +146,40 @@ export default function App() {
       preview: [],
       previewGeometries: {},
     });
-  const setPanel = (panel: string) =>
+  const setPanel = (panel: string) => {
+    const blend = ["fillet", "chamfer"].includes(panel);
+    const edgeRefs: TopologyRef[] = [];
+    for (const r of s.selection.refs.filter((r) =>
+      ["edge", "loop", "curve", "connected-edges"].includes(r.kind),
+    )) {
+      const previous = edgeRefs.find(
+        (p) => p.bodyId === r.bodyId && p.revision === r.revision,
+      );
+      if (previous) previous.ids = [...new Set([...previous.ids, ...r.ids])];
+      else edgeRefs.push({ ...r, kind: "edge" });
+    }
     s.patch({
       panel,
       tool: "select",
       brush: false,
+      error: null,
+      ...(blend
+        ? {
+            entity: "edge" as const,
+            selection: {
+              ...s.selection,
+              refs: edgeRefs,
+              paint: undefined,
+              mode: "include" as const,
+            },
+            notice:
+              "Click a feature edge. Click additional edges to add them; Shift-click to remove.",
+          }
+        : {}),
       preview: [],
       previewGeometries: {},
     });
+  };
   const entity = (kind: EntityKind) =>
     s.patch({ entity: kind, brush: false, tool: "select" });
   const mirror = () => {
@@ -859,7 +885,7 @@ export default function App() {
           {s.selection.refs
             .reduce((n, r) => n + r.ids.length, 0)
             .toLocaleString()}{" "}
-          selected
+          {s.selection.mode === "exclude" ? "excluded" : "selected"}
         </span>
         <span className="status-unit">mm</span>
       </footer>

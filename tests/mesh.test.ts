@@ -17,6 +17,7 @@ import {
 } from "../src/geometry/selection";
 import { identityTransform } from "../src/types";
 import { paintRegion } from "../src/geometry/paint";
+import { meshEdgeChains } from "../src/geometry/edgeChains";
 const cube = () =>
   buildRevision(
     new THREE.BoxGeometry(20, 20, 20).toNonIndexed().attributes.position
@@ -79,6 +80,24 @@ describe("mesh geometry and editor semantics", () => {
     expect(effectiveSelection(g, [edges[0]], "exclude", true)).toEqual(
       edges.slice(1),
     );
+  });
+  it("follows a subdivided straight edge without turning at cube corners", () => {
+    const g = buildRevision(
+      new THREE.BoxGeometry(20, 20, 20, 8, 8, 8).toNonIndexed().attributes
+        .position.array as Float32Array,
+    );
+    const features = featureEdges(g),
+      ids = edgeSelection(g, features[0], "edge");
+    expect(ids).toHaveLength(8);
+    const [chain] = meshEdgeChains(g, ids);
+    expect(
+      new THREE.Vector3(...chain.a).distanceTo(new THREE.Vector3(...chain.b)),
+    ).toBeCloseTo(20);
+    expect(chain.branches).toHaveLength(0);
+    expect(meshEdgeChains(g, [ids[0], ids[7]])).toHaveLength(1);
+    const other = features.find((i) => !ids.includes(i))!;
+    expect(meshEdgeChains(g, [ids[0], other])).toHaveLength(2);
+    expect(meshEdgeChains(g, features)).toHaveLength(12);
   });
   it("paints a small patch on a coarse cube without changing base mesh topology", () => {
     const g = cube(),

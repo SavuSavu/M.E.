@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { bucketFill } from "../vendor/bumpmesh/exclusion.js";
 import type { GeometryRevision, EntityKind } from "../types";
+import { straightEdgeChain } from "./edgeChains";
 export function effectiveSelection(
   g: GeometryRevision,
   ids: number[],
@@ -82,14 +83,22 @@ export function surfaceSelection(
   }
   return out;
 }
+const featureCache = new WeakMap<
+  GeometryRevision,
+  { angle: number; ids: number[] }
+>();
 export function featureEdges(g: GeometryRevision, angle = 20) {
-  return g.edges
+  const cached = featureCache.get(g);
+  if (cached?.angle === angle) return cached.ids;
+  const ids = g.edges
     .map((e, i) => ({ e, i }))
     .filter(
       ({ e }) =>
         e.kernelId !== undefined || e.faces.length !== 2 || e.angle > angle,
     )
     .map(({ i }) => i);
+  featureCache.set(g, { angle, ids });
+  return ids;
 }
 const key = (p: number[]) => p.map((x) => Math.round(x * 1e4)).join(",");
 export function edgeSelection(
@@ -113,7 +122,7 @@ export function edgeSelection(
         : [];
     }
   }
-  if (mode === "edge") return [seed];
+  if (mode === "edge") return straightEdgeChain(g, seed).ids;
   const features = featureEdges(g, threshold),
     byVertex = new Map<string, number[]>();
   for (const i of features)
@@ -191,8 +200,8 @@ export function fittedRadius(points: THREE.Vector3[]) {
           .divideScalar(den),
       ),
     radius = center.distanceTo(a);
-  const error = Math.max(
-    ...points.map((p) => Math.abs(p.distanceTo(center) - radius)),
-  );
+  let error = 0;
+  for (const point of points)
+    error = Math.max(error, Math.abs(point.distanceTo(center) - radius));
   return { center, radius, error };
 }

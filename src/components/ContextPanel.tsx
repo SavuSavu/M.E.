@@ -20,7 +20,8 @@ import {
 import type { PreparedOperation } from "../state/operations";
 import { runJob } from "../geometry/jobs";
 import { rebuildHistory } from "../state/history";
-import { fittedRadius } from "../geometry/selection";
+import { fittedRadius, effectiveSelection } from "../geometry/selection";
+import { meshEdgeChains } from "../geometry/edgeChains";
 import { transformMatrix } from "../geometry/mesh";
 import * as THREE from "three";
 import type { Operation, Vec3 } from "../types";
@@ -84,6 +85,7 @@ export function ContextPanel() {
     [diag, setDiag] = useState<any>(null);
   useEffect(() => {
     setPrepared(undefined);
+    s.patch({ preview: [], previewGeometries: {} });
     setTarget(s.selection.bodyIds[0] || "");
     setTool(
       s.selection.bodyIds[1] ||
@@ -93,7 +95,7 @@ export function ContextPanel() {
         "",
     );
     setDiag(null);
-  }, [s.panel]);
+  }, [s.panel, s.selection]);
   useEffect(
     () => setTrans(body ? structuredClone(body.transform) : undefined),
     [body],
@@ -113,6 +115,35 @@ export function ContextPanel() {
     setPrepared(undefined);
   };
   const boolean = ["union", "subtract", "intersect"].includes(s.panel || "");
+  const blend = ["fillet", "chamfer"].includes(s.panel || "");
+  const rawBlendIds = [
+    ...new Set(
+      s.selection.refs
+        .filter(
+          (r) =>
+            r.bodyId === body?.id &&
+            ["edge", "loop", "curve", "connected-edges"].includes(r.kind),
+        )
+        .flatMap((r) => r.ids),
+    ),
+  ];
+  const blendIds =
+    blend && g
+      ? effectiveSelection(
+          g,
+          rawBlendIds,
+          s.selection.mode,
+          true,
+          s.selection.angle,
+        )
+      : rawBlendIds;
+  const meshChains = g?.kind === "mesh" ? meshEdgeChains(g, blendIds) : [];
+  const needsContinuation = meshChains.some((c) => c.branches.length);
+  const blendCount = !g
+    ? 0
+    : g.kind === "brep"
+      ? new Set(blendIds.map((i) => g.edges[i]?.kernelId)).size
+      : meshChains.length;
   const preview = async () => {
     const operation = s.panel as Operation;
     if (
@@ -375,13 +406,45 @@ export function ContextPanel() {
                 {s.panel === "fillet" || s.panel === "chamfer"
                   ? g?.kind === "brep"
                     ? "Blend selected CAD edges with the solid kernel."
-                    : "Approximate blend of one straight convex edge between perpendicular planar patches."
+                    : "Approximate blend of complete straight convex edges between flat faces meeting at 90°. Stops at corners; select adjoining edges to continue."
                   : s.panel === "offset"
                     ? "Select a complete planar face or mesh region. Positive adds material, negative subtracts."
                     : s.panel === "repair"
                       ? "Resolve tiny T-junctions. This does not fill holes or reconstruct broken solids."
                       : "Process the mesh in a worker, retaining the original in history."}
               </p>
+              {blend && (
+                <div
+                  className="edge-selection-prompt"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <strong>
+                    {needsContinuation
+                      ? "Select the edge continuation"
+                      : blendCount
+                        ? `${blendCount} ${g?.kind === "brep" ? "CAD" : "straight"} edge${blendCount === 1 ? "" : "s"} selected`
+                        : `Select an edge to ${s.panel}`}
+                  </strong>
+                  {blendCount > 0 && g?.kind === "mesh" && (
+                    <span>
+                      {blendIds.length} mesh segment
+                      {blendIds.length === 1 ? "" : "s"} · follows the complete
+                      straight edge
+                    </span>
+                  )}
+                  <p>
+                    {needsContinuation
+                      ? "Several continuations meet here. Click the segment you want to follow; Shift-click unwanted segments."
+                      : blendCount
+                        ? "Add adjoining edges to continue around corners. Shift-click removes an edge."
+                        : "Click a feature edge in the viewport. The full edge is followed automatically."}
+                  </p>
+                  <span className="selection-key">
+                    <i /> Bright yellow = selected
+                  </span>
+                </div>
+              )}
               {["fillet", "chamfer", "offset"].includes(s.panel) && (
                 <NumberField
                   label={
@@ -424,7 +487,9 @@ export function ContextPanel() {
           <div className="tool-actions">
             <button
               className="secondary-button"
-              disabled={Boolean(s.busy)}
+              disabled={
+                Boolean(s.busy) || (blend && (!blendCount || needsContinuation))
+              }
               onClick={preview}
             >
               <Eye size={15} />
@@ -432,7 +497,9 @@ export function ContextPanel() {
             </button>
             <button
               className="primary-button"
-              disabled={Boolean(s.busy)}
+              disabled={
+                Boolean(s.busy) || (blend && (!blendCount || needsContinuation))
+              }
               onClick={apply}
             >
               <Check size={16} />
@@ -630,7 +697,8 @@ export function ContextPanel() {
                 {s.selection.refs
                   .reduce((n, r) => n + r.ids.length, 0)
                   .toLocaleString()}{" "}
-                selected entities · Shift to remove
+                {s.selection.mode === "exclude" ? "excluded" : "selected"}{" "}
+                entities · Shift to remove
               </div>
               {exactRadius !== undefined ? (
                 <div className="info-box">

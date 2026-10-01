@@ -2,6 +2,9 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { MeshBVH, acceleratedRaycast } from "three-mesh-bvh";
 import { SectionController } from "../vendor/bumpmesh/section.js";
 import { buildExclusionOverlayGeo } from "../vendor/bumpmesh/exclusion.js";
@@ -84,8 +87,9 @@ export function Viewport() {
     scene.add(axes);
     const models = new THREE.Group(),
       overlays = new THREE.Group(),
+      hoverEdges = new THREE.Group(),
       preview = new THREE.Group();
-    scene.add(models, overlays, preview);
+    scene.add(models, overlays, hoverEdges, preview);
     const gizmo = new TransformControls(camera, renderer.domElement);
     gizmo.setSpace("world");
     gizmo.setSize(0.8);
@@ -95,7 +99,9 @@ export function Viewport() {
     let dirty = true,
       frame = 0,
       disposed = false,
-      fitPending = false;
+      fitPending = false,
+      hoverKey = "",
+      lastEdgeHover = 0;
     const requestRender = () => {
       dirty = true;
     };
@@ -238,7 +244,54 @@ export function Viewport() {
       }
       section.setSuppressed(["move", "rotate", "scale"].includes(s.tool));
       clearGroup(overlays);
-      for (const selection of s.selection.refs) {
+      clearGroup(hoverEdges);
+      hoverKey = "";
+      const edgeMode = ["edge", "loop", "connected-edges", "curve"].includes(
+        s.entity,
+      );
+      if (edgeMode)
+        for (const body of s.bodies.filter(
+          (b) => b.visible && s.selection.bodyIds.includes(b.id),
+        )) {
+          const g = s.geometries[body.geometryId],
+            mesh = meshes.get(body.id)!;
+          const points = featureEdges(g, s.selection.angle).flatMap((i) => [
+            ...g.edges[i].a,
+            ...g.edges[i].b,
+          ]);
+          const outline = new LineSegments2(
+            new LineSegmentsGeometry().setPositions(points),
+            new LineMaterial({
+              color: "#334557",
+              linewidth: 1.8,
+              depthTest: true,
+              depthWrite: false,
+              polygonOffset: true,
+              polygonOffsetFactor: -2,
+            }),
+          );
+          outline.position.copy(mesh.position);
+          outline.quaternion.copy(mesh.quaternion);
+          outline.scale.copy(mesh.scale);
+          outline.renderOrder = 3;
+          overlays.add(outline);
+        }
+      const refs =
+        edgeMode &&
+        s.selection.mode === "exclude" &&
+        !s.selection.refs.length &&
+        s.selection.bodyIds[0]
+          ? [
+              {
+                bodyId: s.selection.bodyIds[0],
+                revision: s.bodies.find((b) => b.id === s.selection.bodyIds[0])!
+                  .geometryId,
+                kind: "edge",
+                ids: [] as number[],
+              },
+            ]
+          : s.selection.refs;
+      for (const selection of refs) {
         const body = s.bodies.find((b) => b.id === selection.bodyId),
           mesh = meshes.get(selection.bodyId);
         if (!body || !mesh || selection.revision !== body.geometryId) continue;
@@ -256,11 +309,24 @@ export function Viewport() {
             ).flatMap((i) =>
               g.edges[i] ? [...g.edges[i].a, ...g.edges[i].b] : [],
             ),
-            geo = bufferGeometry(new Float32Array(p));
-          object = new THREE.LineSegments(
-            geo,
-            new THREE.LineBasicMaterial({ color: "#73f2d2", depthTest: false }),
-          );
+            group = new THREE.Group();
+          for (const [color, linewidth] of [
+            ["#101820", 8],
+            ["#ffda60", 4],
+          ] as const) {
+            const line = new LineSegments2(
+              new LineSegmentsGeometry().setPositions(p),
+              new LineMaterial({
+                color,
+                linewidth,
+                depthTest: false,
+                depthWrite: false,
+              }),
+            );
+            line.renderOrder = linewidth === 8 ? 5 : 6;
+            group.add(line);
+          }
+          object = group;
         } else {
           const paint =
             s.selection.paint?.bodyId === body.id
@@ -276,9 +342,9 @@ export function Viewport() {
           object = new THREE.Mesh(
             geo,
             new THREE.MeshBasicMaterial({
-              color: s.selection.mode === "exclude" ? "#f2a777" : "#56d9ba",
+              color: s.selection.mode === "exclude" ? "#ffad66" : "#ffc83d",
               transparent: true,
-              opacity: 0.45,
+              opacity: 0.68,
               side: THREE.DoubleSide,
               depthWrite: false,
               polygonOffset: true,
@@ -296,6 +362,7 @@ export function Viewport() {
       if (
         s.selection.mode === "exclude" &&
         !s.selection.refs.length &&
+        !edgeMode &&
         active
       ) {
         const object = new THREE.Mesh(
@@ -478,10 +545,173 @@ export function Viewport() {
       }
       requestRender();
     };
+    const findEdge = (e: PointerEvent) => {
+      const s = useEditor.getState(),
+        rect = renderer.domElement.getBoundingClientRect();
+      const pointer = new THREE.Vector2(
+        e.clientX - rect.left,
+        e.clientY - rect.top,
+      );
+      const candidates: {
+        bodyId: string;
+        id: number;
+        point: THREE.Vector3;
+        screen: THREE.Vector2;
+        distance: number;
+        depth: number;
+      }[] = [];
+      const objects = [...meshes.values()].filter((m) => m.visible);
+      for (const mesh of objects) {
+        const body = s.bodies.find((b) => b.id === mesh.userData.bodyId)!;
+        const g = s.geometries[body.geometryId],
+          normalMatrix = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+        for (const id of featureEdges(g, s.selection.angle)) {
+          const edge = g.edges[id],
+            a = new THREE.Vector3(...edge.a).applyMatrix4(mesh.matrixWorld),
+            b = new THREE.Vector3(...edge.b).applyMatrix4(mesh.matrixWorld),
+            pa = a.clone().project(camera),
+            pb = b.clone().project(camera);
+          if (Math.min(pa.z, pb.z) > 1 || Math.max(pa.z, pb.z) < -1) continue;
+          const start = new THREE.Vector2(
+              ((pa.x + 1) * rect.width) / 2,
+              ((1 - pa.y) * rect.height) / 2,
+            ),
+            end = new THREE.Vector2(
+              ((pb.x + 1) * rect.width) / 2,
+              ((1 - pb.y) * rect.height) / 2,
+            ),
+            delta = end.clone().sub(start);
+          const t = Math.max(
+            0,
+            Math.min(
+              1,
+              pointer.clone().sub(start).dot(delta) / (delta.lengthSq() || 1),
+            ),
+          );
+          const at = start.clone().addScaledVector(delta, t),
+            distance = at.distanceTo(pointer);
+          if (distance > 12) continue;
+          const wa = -a.clone().applyMatrix4(camera.matrixWorldInverse).z;
+          const wb = -b.clone().applyMatrix4(camera.matrixWorldInverse).z;
+          const worldT =
+            camera instanceof THREE.PerspectiveCamera
+              ? (t * wa) / ((1 - t) * wb + t * wa)
+              : t;
+          const point = a.clone().lerp(b, worldT);
+          if (section.clips(point)) continue;
+          const towardCamera =
+            camera instanceof THREE.OrthographicCamera
+              ? camera.getWorldDirection(new THREE.Vector3()).negate()
+              : camera.position.clone().sub(point).normalize();
+          if (
+            g.kind === "mesh" &&
+            !edge.faces.some(
+              (f) =>
+                new THREE.Vector3()
+                  .fromArray(g.faceNormals, f * 3)
+                  .applyMatrix3(normalMatrix)
+                  .normalize()
+                  .dot(towardCamera) > 1e-6,
+            )
+          )
+            continue;
+          candidates.push({
+            bodyId: body.id,
+            id,
+            point,
+            screen: at,
+            distance,
+            depth: camera.position.distanceTo(point),
+          });
+        }
+      }
+      candidates.sort((a, b) => a.distance - b.distance || a.depth - b.depth);
+      for (const candidate of candidates) {
+        const perPixel =
+          camera instanceof THREE.OrthographicCamera
+            ? (camera.top - camera.bottom) / camera.zoom / rect.height
+            : (candidate.depth *
+                2 *
+                Math.tan(
+                  THREE.MathUtils.degToRad(
+                    (camera as THREE.PerspectiveCamera).fov / 2,
+                  ),
+                )) /
+              rect.height;
+        // Rays exactly on a silhouette can miss the front triangle and hit its
+        // rear face. Probe slightly into adjacent faces before declaring occlusion.
+        const mesh = meshes.get(candidate.bodyId)!,
+          body = s.bodies.find((b) => b.id === candidate.bodyId)!,
+          g = s.geometries[body.geometryId];
+        const probes = [candidate.screen];
+        for (const f of g.edges[candidate.id].faces) {
+          const center = new THREE.Vector3()
+            .fromArray(g.centroids, f * 3)
+            .applyMatrix4(mesh.matrixWorld)
+            .project(camera);
+          const offset = new THREE.Vector2(
+            ((center.x + 1) * rect.width) / 2,
+            ((1 - center.y) * rect.height) / 2,
+          )
+            .sub(candidate.screen)
+            .normalize();
+          probes.push(candidate.screen.clone().add(offset));
+        }
+        for (const offset of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ])
+          probes.push(
+            candidate.screen.clone().add(new THREE.Vector2(...offset)),
+          );
+        let found = false;
+        for (const probe of probes) {
+          raycaster.setFromCamera(
+            new THREE.Vector2(
+              (probe.x / rect.width) * 2 - 1,
+              1 - (probe.y / rect.height) * 2,
+            ),
+            camera,
+          );
+          const front = raycaster
+            .intersectObjects(objects, false)
+            .find((h) => !section.clips(h.point));
+          if (!front) continue;
+          found = true;
+          if (
+            front.object.userData.bodyId === candidate.bodyId &&
+            front.point.distanceTo(candidate.point) <=
+              Math.max(perPixel * 3, 1e-4)
+          )
+            return candidate;
+        }
+        if (!found) return candidate;
+      }
+    };
     const handlePick = async (e: PointerEvent) => {
       const s = useEditor.getState();
       if (s.busy) return;
-      const hit = hits(e)[0];
+      const edgeMode =
+        ["edge", "loop", "connected-edges", "curve"].includes(s.entity) &&
+        s.tool === "select";
+      const pickedEdge = edgeMode ? findEdge(e) : undefined;
+      const hit = pickedEdge
+        ? ({
+            object: meshes.get(pickedEdge.bodyId)!,
+            point: pickedEdge.point,
+            distance: pickedEdge.depth,
+            faceIndex: 0,
+          } as THREE.Intersection)
+        : hits(e)[0];
+      if (edgeMode && !pickedEdge) {
+        s.patch({
+          notice:
+            "Click near a visible feature edge. Corners and boundaries are pickable from either side.",
+        });
+        return;
+      }
       if (!hit) {
         s.selectBodies([]);
         return;
@@ -608,51 +838,8 @@ export function Viewport() {
       }
       let ids: number[] = [];
       if (["edge", "loop", "connected-edges", "curve"].includes(s.entity)) {
-        const point = mesh.worldToLocal(hit.point.clone());
-        let nearest = -1,
-          distance = Infinity;
-        for (const i of featureEdges(g, s.selection.angle)) {
-          const edge = g.edges[i],
-            line = new THREE.Line3(
-              new THREE.Vector3(...edge.a),
-              new THREE.Vector3(...edge.b),
-            ),
-            at = line.closestPointToPoint(point, true, new THREE.Vector3()),
-            d = at.distanceToSquared(point);
-          if (d < distance) {
-            distance = d;
-            nearest = i;
-          }
-        }
-        if (nearest < 0) return;
-        const edge = g.edges[nearest],
-          rect = renderer.domElement.getBoundingClientRect(),
-          a = new THREE.Vector3(...edge.a)
-            .applyMatrix4(mesh.matrixWorld)
-            .project(camera),
-          b = new THREE.Vector3(...edge.b)
-            .applyMatrix4(mesh.matrixWorld)
-            .project(camera);
-        const screen = (p: THREE.Vector3) =>
-            new THREE.Vector3(
-              ((p.x + 1) * rect.width) / 2,
-              ((1 - p.y) * rect.height) / 2,
-              0,
-            ),
-          at = new THREE.Line3(screen(a), screen(b)).closestPointToPoint(
-            new THREE.Vector3(e.clientX - rect.left, e.clientY - rect.top, 0),
-            true,
-            new THREE.Vector3(),
-          );
-        if (
-          at.distanceTo(
-            new THREE.Vector3(e.clientX - rect.left, e.clientY - rect.top, 0),
-          ) > 10
-        ) {
-          s.patch({ notice: "Pick near a visible feature edge." });
-          return;
-        }
-        ids = edgeSelection(g, nearest, s.entity, s.selection.angle);
+        if (!pickedEdge) return;
+        ids = edgeSelection(g, pickedEdge.id, s.entity, s.selection.angle);
       } else if (g.diagnostics.triangles > 10000) {
         s.patch({ busy: { message: "Selecting surface", progress: 0 } });
         try {
@@ -682,7 +869,7 @@ export function Viewport() {
         ids,
         s.entity,
         e.shiftKey,
-        e.ctrlKey || e.metaKey,
+        e.ctrlKey || e.metaKey || ["fillet", "chamfer"].includes(s.panel || ""),
       );
       const after = useEditor.getState().selection;
       if (JSON.stringify(before) !== JSON.stringify(after)) {
@@ -697,7 +884,10 @@ export function Viewport() {
         : THREE.MOUSE.ROTATE;
       if (e.button !== 0) return;
       if (gizmo.axis || section.busy() || s.busy) return;
+      clearGroup(hoverEdges);
+      hoverKey = "";
       down = { x: e.clientX, y: e.clientY };
+      requestRender();
       if (s.brush) {
         drawing = true;
         stroke = [];
@@ -713,6 +903,68 @@ export function Viewport() {
         return;
       }
       if (gizmo.dragging || useEditor.getState().busy) return;
+      if (e.buttons && hoverKey) {
+        clearGroup(hoverEdges);
+        hoverKey = "";
+        requestRender();
+      }
+      const state = useEditor.getState();
+      if (
+        ["edge", "loop", "connected-edges", "curve"].includes(state.entity) &&
+        state.tool === "select" &&
+        !e.buttons
+      ) {
+        if (performance.now() - lastEdgeHover < 50) return;
+        lastEdgeHover = performance.now();
+        const candidate = findEdge(e),
+          key = candidate ? `${candidate.bodyId}:${candidate.id}` : "";
+        renderer.domElement.style.cursor = candidate ? "pointer" : "crosshair";
+        if (key !== hoverKey) {
+          clearGroup(hoverEdges);
+          hoverKey = key;
+          if (candidate) {
+            const body = state.bodies.find((b) => b.id === candidate.bodyId)!,
+              g = state.geometries[body.geometryId],
+              mesh = meshes.get(body.id)!;
+            const ids = edgeSelection(
+              g,
+              candidate.id,
+              "edge",
+              state.selection.angle,
+            );
+            const points = ids.flatMap((i) => [
+              ...g.edges[i].a,
+              ...g.edges[i].b,
+            ]);
+            for (const [color, linewidth] of [
+              ["#101820", 7],
+              ["#54dfff", 3],
+            ] as const) {
+              const line = new LineSegments2(
+                new LineSegmentsGeometry().setPositions(points),
+                new LineMaterial({
+                  color,
+                  linewidth,
+                  depthTest: false,
+                  depthWrite: false,
+                  clippingPlanes: state.section ? [section.plane] : [],
+                }),
+              );
+              line.position.copy(mesh.position);
+              line.quaternion.copy(mesh.quaternion);
+              line.scale.copy(mesh.scale);
+              line.renderOrder = 4;
+              hoverEdges.add(line);
+            }
+            state.patch({
+              hover: `${body.name} · Edge · ${ids.length} segment${ids.length === 1 ? "" : "s"} · Click to add, Shift to remove`,
+            });
+          } else state.patch({ hover: "" });
+          requestRender();
+        } else if (!candidate && state.hover) state.patch({ hover: "" });
+        return;
+      }
+      renderer.domElement.style.cursor = "default";
       const hit = hits(e)[0],
         s = useEditor.getState(),
         text = hit
@@ -786,11 +1038,18 @@ export function Viewport() {
         handlePick(e);
       down = null;
     };
+    const onLeave = () => {
+      clearGroup(hoverEdges);
+      hoverKey = "";
+      requestRender();
+      useEditor.getState().patch({ hover: "" });
+    };
     const onContext = (e: Event) => e.preventDefault();
     renderer.domElement.addEventListener("pointerdown", onDown, {
       capture: true,
     });
     renderer.domElement.addEventListener("pointermove", onMove);
+    renderer.domElement.addEventListener("pointerleave", onLeave);
     renderer.domElement.addEventListener("pointerup", onUp);
     renderer.domElement.addEventListener("contextmenu", onContext);
     let middleClick = 0;
